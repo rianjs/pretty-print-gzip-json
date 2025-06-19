@@ -74,7 +74,7 @@ npm run package
 ├── manifest.json          # Chrome extension manifest
 ├── webpack.config.js      # Build configuration
 ├── tsconfig.json          # TypeScript configuration
-├── .eslintrc.js          # ESLint configuration
+├── eslint.config.mjs      # ESLint configuration
 └── package.json           # Dependencies and scripts
 ```
 
@@ -83,7 +83,7 @@ npm run package
 - **TypeScript** - Type-safe development
 - **Webpack** - Module bundling and build process
 - **Pako** - Gzip compression/decompression
-- **ESLint** - Code linting
+- **ESLint 9** - Modern code linting with flat config
 - **Jest** - Testing framework (configured but tests need to be written)
 - **GitHub Actions** - CI/CD pipeline
 
@@ -92,7 +92,7 @@ npm run package
 The project includes a GitHub Actions workflow that:
 - Runs linting and tests on every push and PR
 - Builds the extension
-- Packages the extension for distribution
+- Creates a zip package for distribution
 - Automatically creates release artifacts when a GitHub release is published
 
 ## Contributing
