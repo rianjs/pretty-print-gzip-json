@@ -1,0 +1,27 @@
+{
+  "manifest_version": 3,
+  "name": "DynamoDB Payload Formatter",
+  "version": "1.0.0",
+  "description": "Right-click to copy formatted JSON from base64 gzipped DynamoDB payloads",
+  "permissions": [
+    "contextMenus",
+    "activeTab",
+    "notifications"
+  ],
+  "host_permissions": [
+    "https://*.console.aws.amazon.com/*"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "content_scripts": [
+    {
+      "matches": ["https://*.console.aws.amazon.com/*"],
+      "js": ["content.js"]
+    }
+  ],
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "DynamoDB Payload Formatter"
+  }
+}
