@@ -15,14 +15,14 @@ chrome.contextMenus.onClicked.addListener(async (info, tab) => {
       if (response.success) {
         chrome.notifications.create({
           type: 'basic',
-          iconUrl: 'gzip-json-water-48.png',
+          iconUrl: 'icons/gzip-json-water-48.png',
           title: 'DynamoDB Payload Formatter',
           message: 'Formatted JSON copied to clipboard!'
         });
       } else {
         chrome.notifications.create({
           type: 'basic',
-          iconUrl: 'gzip-json-water-48.png',
+          iconUrl: 'icons/gzip-json-water-48.png',
           title: 'DynamoDB Payload Formatter',
           message: `Error: ${response.error}`
         });
@@ -30,7 +30,7 @@ chrome.contextMenus.onClicked.addListener(async (info, tab) => {
     } catch (error) {
       chrome.notifications.create({
         type: 'basic',
-        iconUrl: 'gzip-json-water-48.png',
+        iconUrl: 'icons/gzip-json-water-48.png',
         title: 'DynamoDB Payload Formatter',
         message: 'Failed to format payload. Make sure you\'re right-clicking on a textarea.'
       });
