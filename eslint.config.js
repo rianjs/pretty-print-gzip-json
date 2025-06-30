@@ -1,5 +1,6 @@
 import js from '@eslint/js';
 import tseslint from 'typescript-eslint';
+import globals from 'globals';
 
 export default tseslint.config(
   js.configs.recommended,
@@ -9,9 +10,9 @@ export default tseslint.config(
       ecmaVersion: 2020,
       sourceType: 'module',
       globals: {
+        ...globals.browser,
+        ...globals.node,
         chrome: 'readonly',
-        browser: true,
-        node: true,
       },
     },
     rules: {
