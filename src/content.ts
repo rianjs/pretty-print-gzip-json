@@ -18,12 +18,26 @@ class PayloadFormatter {
   private _hoverTimeout: number | null = null;
   private _previewPanel: PreviewPanel | null = null;
   private _currentHoveredTextarea: HTMLTextAreaElement | null = null;
+  private _lastMouseMoveTime = 0;
   private readonly _hoverDelay = 300;
+  private readonly _mouseMoveThrottle = 100; // Throttle mousemove events
+  private _debugMode = false; // Set to true to enable console logging
 
   constructor() {
     this.attachEventListeners();
     this.registerMessageHandler();
     this.createPreviewPanel();
+    
+    // Enable debug mode by setting window.dynamoDBFormatterDebug = true in console
+    if ((window as any).dynamoDBFormatterDebug) {
+      this._debugMode = true;
+    }
+  }
+
+  private debug(message: string, ...args: any[]): void {
+    if (this._debugMode) {
+      console.debug('DynamoDB Formatter:', message, ...args);
+    }
   }
 
   private attachEventListeners(): void {
@@ -31,9 +45,15 @@ class PayloadFormatter {
       this._lastRightClickedElement = event.target as HTMLElement;
     });
 
-    // Add hover listeners using event delegation
-    document.addEventListener('mouseenter', this.handleMouseEnter.bind(this), true);
-    document.addEventListener('mouseleave', this.handleMouseLeave.bind(this), true);
+    // Only mousemove handles hover detection
+    document.addEventListener('mousemove', this.handleMouseMove.bind(this), true);
+  
+    // Hide panel when clicking outside
+    document.addEventListener('click', (event) => {
+      if (this._previewPanel?.isVisible && !this._previewPanel.element.contains(event.target as Node)) {
+        this.hidePreviewPanel();
+      }
+    });
   }
 
   private registerMessageHandler(): void {
@@ -234,19 +254,51 @@ class PayloadFormatter {
     }
   }
 
-  private handleMouseEnter(event: Event): void {
+  private handleMouseMove(event: MouseEvent): void {
     const target = event.target as HTMLElement;
-    
+    const now = Date.now();
+  
+    // Throttle mousemove events
+    if (now - this._lastMouseMoveTime < this._mouseMoveThrottle) {
+      return;
+    }
+    this._lastMouseMoveTime = now;
+  
     if (target.tagName === 'TEXTAREA' && this.isInDynamoDBConsole()) {
-      this._currentHoveredTextarea = target as HTMLTextAreaElement;
-      
-      if (this._hoverTimeout) {
-        clearTimeout(this._hoverTimeout);
+      if (this._currentHoveredTextarea !== target) {
+        // Entered a new textarea
+        this.startHoverTimer(target as HTMLTextAreaElement);
       }
+    } else {
+      // Moved off a textarea to something else
+      if (this._currentHoveredTextarea !== null) {
+        this._currentHoveredTextarea = null;
+        this.clearHoverTimer();
+        this.hidePreviewPanel();
+      }
+    }
+  }
 
-      this._hoverTimeout = window.setTimeout(() => {
-        this.showPreviewForTextarea(this._currentHoveredTextarea!);
-      }, this._hoverDelay);
+  private startHoverTimer(textarea: HTMLTextAreaElement): void {
+    // Clear any existing timer
+    this.clearHoverTimer();
+    
+    this._currentHoveredTextarea = textarea;
+    
+    this.debug('starting hover timer');
+    this._hoverTimeout = window.setTimeout(() => {
+      this.debug('hover timer fired');
+      if (this._currentHoveredTextarea === textarea) {
+        this.showPreviewForTextarea(textarea);
+      }
+    }, this._hoverDelay);
+  }
+
+  private clearHoverTimer(): void {
+    if (this._hoverTimeout) {
+      this.debug('clearing hover timer');
+      clearTimeout(this._hoverTimeout);
+      this._hoverTimeout = null;
     }
   }
 
@@ -254,10 +306,14 @@ class PayloadFormatter {
     const target = event.target as HTMLElement;
     
     if (target.tagName === 'TEXTAREA') {
-      if (this._hoverTimeout) {
-        clearTimeout(this._hoverTimeout);
-        this._hoverTimeout = null;
+      this.debug('mouseleave on textarea');
+      
+      // Clear the current textarea if we're leaving it
+      if (this._currentHoveredTextarea === target) {
+        this._currentHoveredTextarea = null;
       }
+
+      this.clearHoverTimer();
 
       // Delay hiding to allow moving to the preview panel
       setTimeout(() => {
@@ -276,21 +332,22 @@ class PayloadFormatter {
     if (!this._previewPanel || !textarea.value.trim()) {
       return;
     }
-
+  
     const result = this.processPayload(textarea.value.trim());
-    
+  
     if (result.success && result.data) {
       this.showPreviewPanel(result.data, textarea);
-      
-      // Set up copy button
+  
       this._previewPanel.copyButton.onclick = () => {
         this.copyToClipboard(result.data!);
         this.showCopyFeedback();
       };
-    } else if (result.error) {
-      this.showErrorPreview(result.error, textarea);
+    } else {
+      // Normal case: nothing to preview; do nothing
+      this.hidePreviewPanel();
     }
   }
+
 
   private showPreviewPanel(content: string, textarea: HTMLTextAreaElement): void {
     if (!this._previewPanel) return;
@@ -356,15 +413,13 @@ class PayloadFormatter {
   }
 
   private hidePreviewPanel(): void {
-    if (this._previewPanel) {
+    if (this._previewPanel && this._previewPanel.isVisible) {
+      this.debug('hiding preview panel');
       this._previewPanel.element.style.display = 'none';
       this._previewPanel.isVisible = false;
     }
 
-    if (this._hoverTimeout) {
-      clearTimeout(this._hoverTimeout);
-      this._hoverTimeout = null;
-    }
+    this.clearHoverTimer();
   }
 
   private showCopyFeedback(): void {
@@ -416,11 +471,11 @@ class PayloadFormatter {
       const jsonString = new TextDecoder().decode(decompressedData);
       const parsedJson = JSON.parse(jsonString);
       const formattedJson = JSON.stringify(parsedJson, null, 2);
-      
+  
       return { success: true, data: formattedJson };
     } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-      return { success: false, error: `Failed to process payload: ${errorMessage}` };
+      // Instead of treating this as an error, treat it as "not decodable"
+      return { success: false };
     }
   }
 
