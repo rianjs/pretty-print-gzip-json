@@ -959,21 +959,29 @@ class PayloadFormatter {
     try {
       this.debug('Previewing S3 file from detail page:', fileName);
       
-      // Try to get the download URL by examining the button first
+      // First try to extract URL from the button without clicking it
       let downloadUrl = this.extractDownloadUrlFromDetailPage(downloadButton);
+      this.debug('URL from button extraction:', downloadUrl);
       
+      // If that fails, try to extract from page context (looking for pre-signed URLs)
       if (!downloadUrl) {
-        // Try to intercept the download by temporarily overriding window.open
-        downloadUrl = await this.captureDownloadUrl(downloadButton);
+        downloadUrl = this.extractUrlFromPageContext(fileName);
+        this.debug('URL from page context:', downloadUrl);
+      }
+      
+      // If we still don't have a URL, try intercepting the download request
+      if (!downloadUrl) {
+        downloadUrl = await this.interceptDownloadRequest(downloadButton);
+        this.debug('URL from request interception:', downloadUrl);
+      }
+      
+      // If we still don't have a URL, try constructing it (though it will likely fail with 403)
+      if (!downloadUrl) {
+        downloadUrl = this.constructS3DownloadUrl(fileName);
+        this.debug('Constructed URL (may not have auth):', downloadUrl);
       }
       
       if (!downloadUrl) {
-        // Fallback: try to construct the URL from the current page
-        const constructedUrl = this.constructS3DownloadUrl(fileName);
-        if (constructedUrl) {
-          await this.fetchAndDisplayS3File(constructedUrl, fileName, downloadButton);
-          return;
-        }
         throw new Error('Could not determine download URL');
       }
 
@@ -983,6 +991,117 @@ class PayloadFormatter {
       this.debug('Error previewing S3 file from detail page:', error);
       this.showS3ErrorNotification(`Failed to preview ${fileName}: ${error instanceof Error ? error.message : 'Unknown error'}`);
     }
+  }
+
+  private async interceptDownloadRequest(downloadButton: HTMLElement): Promise<string | null> {
+    return new Promise((resolve) => {
+      this.debug('Attempting to intercept download request');
+      
+      // Store the original fetch function
+      const originalFetch = window.fetch;
+      let capturedUrl: string | null = null;
+      let timeoutId: number;
+      
+      // Override fetch to capture AWS requests
+      window.fetch = function(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
+        const url = typeof input === 'string' ? input : 
+                    input instanceof URL ? input.toString() : 
+                    (input as Request).url;
+        
+        if (url.includes('amazonaws.com')) {
+          capturedUrl = url;
+          // Restore original fetch before resolving
+          window.fetch = originalFetch;
+          resolve(capturedUrl);
+          // Don't actually make the request
+          return Promise.reject(new Error('Request intercepted'));
+        }
+        
+        return originalFetch.call(this, input, init);
+      };
+      
+      // Set a timeout to restore original fetch
+      timeoutId = window.setTimeout(() => {
+        window.fetch = originalFetch;
+        if (!capturedUrl) {
+          resolve(null);
+        }
+      }, 2000);
+      
+      // Try to trigger the download
+      try {
+        downloadButton.click();
+      } catch (error) {
+        this.debug('Error clicking download button:', error);
+        window.clearTimeout(timeoutId);
+        window.fetch = originalFetch;
+        resolve(null);
+      }
+    });
+  }
+
+  private extractUrlFromPageContext(fileName: string): string | null {
+    this.debug('Extracting URL from page context for:', fileName);
+    
+    // Look for any AWS pre-signed URLs in the page that might be for our file
+    const allLinks = Array.from(document.querySelectorAll('a[href*="amazonaws.com"]')) as HTMLAnchorElement[];
+    for (const link of allLinks) {
+      if (link.href.includes(fileName) || link.href.includes('X-Amz-')) {
+        this.debug('Found potential pre-signed link:', link.href);
+        return link.href;
+      }
+    }
+    
+    // Look in script tags for pre-signed URLs
+    const scripts = Array.from(document.querySelectorAll('script'));
+    for (const script of scripts) {
+      const content = script.textContent || '';
+      
+      // Look for pre-signed URLs with X-Amz parameters
+      const preSignedMatch = content.match(/https:\/\/[^"'\s]+\.amazonaws\.com[^"'\s]*X-Amz-[^"'\s]*/g);
+      if (preSignedMatch) {
+        for (const url of preSignedMatch) {
+          if (url.includes(fileName.replace(/\./g, '\\.'))) {
+            this.debug('Found pre-signed URL in script:', url);
+            return url;
+          }
+        }
+      }
+      
+      // Fallback: look for any amazonaws.com URL mentioning our file
+      const urlMatch = content.match(new RegExp(`https://[^\\s"']+amazonaws\\.com[^\\s"']*${fileName.replace('.', '\\.')}[^\\s"']*`, 'g'));
+      if (urlMatch && urlMatch.length > 0) {
+        this.debug('Found AWS URL in script:', urlMatch[0]);
+        return urlMatch[0];
+      }
+    }
+    
+    // Look for URLs in data attributes across the page
+    const elementsWithData = Array.from(document.querySelectorAll('[data-*]'));
+    for (const element of elementsWithData) {
+      const dataset = (element as HTMLElement).dataset;
+      for (const key in dataset) {
+        const value = dataset[key];
+        if (value && value.includes('amazonaws.com') && value.includes(fileName)) {
+          this.debug('Found URL in data attribute:', value);
+          return value;
+        }
+      }
+    }
+    
+    // Look for URLs in the page HTML as last resort
+    const pageContent = document.documentElement.outerHTML;
+    const preSignedMatch = pageContent.match(/https:\/\/[^"'\s]+\.amazonaws\.com[^"'\s]*X-Amz-[^"'\s]*/g);
+    if (preSignedMatch) {
+      for (const url of preSignedMatch) {
+        if (url.includes(fileName.replace(/\./g, '\\.'))) {
+          this.debug('Found pre-signed URL in page content:', url);
+          return url;
+        }
+      }
+    }
+    
+    return null;
   }
 
   private async captureDownloadUrl(downloadButton: HTMLElement): Promise<string | null> {
@@ -1090,13 +1209,20 @@ class PayloadFormatter {
     this.debug('Constructing S3 download URL for:', fileName);
     this.debug('Current URL:', window.location.href);
     
-    // Try to construct S3 download URL from current page context
     const url = new URL(window.location.href);
     const pathParts = url.pathname.split('/').filter(part => part.length > 0);
+    const urlParams = new URLSearchParams(url.search);
     
     this.debug('URL path parts:', pathParts);
     
-    // Find bucket name in the path
+    // Convert URLSearchParams to object for debugging (compatible with older TypeScript)
+    const paramsObj: { [key: string]: string } = {};
+    urlParams.forEach((value, key) => {
+      paramsObj[key] = value;
+    });
+    this.debug('URL params:', paramsObj);
+    
+    // Find bucket name in the path or params
     let bucketIndex = pathParts.indexOf('buckets');
     if (bucketIndex === -1) {
       bucketIndex = pathParts.indexOf('bucket');
@@ -1107,43 +1233,83 @@ class PayloadFormatter {
     
     if (bucketIndex !== -1 && bucketIndex + 1 < pathParts.length) {
       bucketName = pathParts[bucketIndex + 1];
-      this.debug('Found bucket name:', bucketName);
-      
-      // Check if the fileName includes the full path or just the filename
-      if (fileName.includes('/')) {
-        objectKey = fileName; // Use full path
+      this.debug('Found bucket name from path:', bucketName);
+    } else {
+      // Try to extract bucket name from URL params or other sources
+      const bucketParam = urlParams.get('bucket');
+      if (bucketParam) {
+        bucketName = bucketParam;
+        this.debug('Found bucket name from params:', bucketName);
+      }
+    }
+    
+    if (!bucketName) {
+      this.debug('Could not determine bucket name');
+      return null;
+    }
+    
+    // Determine the object key (full path to the file)
+    const prefix = urlParams.get('prefix');
+    if (prefix) {
+      if (prefix.endsWith(fileName)) {
+        objectKey = prefix;
       } else {
-        // Try to reconstruct the object key from the URL
-        const urlParams = new URLSearchParams(url.search);
-        const prefix = urlParams.get('prefix');
-        if (prefix) {
-          objectKey = prefix;
-          this.debug('Using prefix as object key:', objectKey);
-        } else {
-          // Look for object key in the path after bucket name
-          const remainingPath = pathParts.slice(bucketIndex + 2);
-          if (remainingPath.length > 0) {
-            objectKey = remainingPath.join('/');
-            this.debug('Constructed object key from path:', objectKey);
+        objectKey = prefix.endsWith('/') ? prefix + fileName : prefix + '/' + fileName;
+      }
+      this.debug('Using prefix-based object key:', objectKey);
+    } else {
+      // Try to get object key from the URL path after bucket
+      if (bucketIndex !== -1 && bucketIndex + 2 < pathParts.length) {
+        const pathAfterBucket = pathParts.slice(bucketIndex + 2);
+        if (pathAfterBucket.length > 0) {
+          objectKey = pathAfterBucket.join('/');
+          if (!objectKey.endsWith(fileName)) {
+            objectKey = objectKey.endsWith('/') ? objectKey + fileName : objectKey + '/' + fileName;
           }
+          this.debug('Constructed object key from path:', objectKey);
         }
       }
-      
-      // Construct S3 download URL
-      const region = this.extractRegionFromUrl() || 'us-east-1';
-      const constructedUrl = `https://${bucketName}.s3.${region}.amazonaws.com/${encodeURIComponent(objectKey)}`;
-      this.debug('Constructed S3 URL:', constructedUrl);
-      return constructedUrl;
     }
-
-    this.debug('Could not find bucket name in URL');
-    return null;
+    
+    // Extract region from URL
+    const region = this.extractRegionFromUrl() || 'us-east-1';
+    this.debug('Using region:', region);
+    
+    // Construct the S3 URL
+    const constructedUrl = `https://${bucketName}.s3.${region}.amazonaws.com/${encodeURIComponent(objectKey)}`;
+    this.debug('Final constructed URL:', constructedUrl);
+    
+    return constructedUrl;
   }
 
   private extractRegionFromUrl(): string | null {
+    // Try multiple methods to extract region
     const url = new URL(window.location.href);
+    
+    // Method 1: From hostname
     const regionMatch = url.hostname.match(/\.([^.]+)\.console\.aws\.amazon\.com/);
-    return regionMatch ? regionMatch[1] : null;
+    if (regionMatch) {
+      this.debug('Found region from hostname:', regionMatch[1]);
+      return regionMatch[1];
+    }
+    
+    // Method 2: From URL path
+    const pathMatch = url.pathname.match(/\/([^\/]+)\/s3/);
+    if (pathMatch) {
+      this.debug('Found region from path:', pathMatch[1]);
+      return pathMatch[1];
+    }
+    
+    // Method 3: From URL params
+    const urlParams = new URLSearchParams(url.search);
+    const regionParam = urlParams.get('region');
+    if (regionParam) {
+      this.debug('Found region from params:', regionParam);
+      return regionParam;
+    }
+    
+    this.debug('Could not determine region, using default');
+    return null;
   }
 
   private async fetchAndDisplayS3File(downloadUrl: string, fileName: string, anchorElement: HTMLElement): Promise<void> {
