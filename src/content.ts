@@ -20,8 +20,8 @@ class PayloadFormatter {
   private _currentHoveredTextarea: HTMLTextAreaElement | null = null;
   private _lastMouseMoveTime = 0;
   private readonly _hoverDelay = 300;
-  private readonly _mouseMoveThrottle = 100; // Throttle mousemove events
-  private _debugMode = true; // Set to true to enable console logging - enabled for testing
+  private readonly _mouseMoveThrottle = 100;
+  private _debugMode = true;
   private _observedElements = new Set<HTMLElement>();
 
   constructor() {
@@ -30,12 +30,10 @@ class PayloadFormatter {
     this.createPreviewPanel();
     this.initializeS3Support();
     
-    // Enable debug mode by setting window.dynamoDBFormatterDebug = true in console
     if ((window as unknown as { dynamoDBFormatterDebug?: boolean }).dynamoDBFormatterDebug) {
       this._debugMode = true;
     }
     
-    // Add console message for debugging
     console.log('AWS Gzipped JSON Formatter loaded', {
       isS3Console: this.isInS3Console(),
       isDynamoDBConsole: this.isInDynamoDBConsole(),
@@ -55,12 +53,10 @@ class PayloadFormatter {
       this._lastRightClickedElement = event.target as HTMLElement;
     });
 
-    // Only mousemove handles hover detection for DynamoDB
     if (this.isInDynamoDBConsole()) {
       document.addEventListener('mousemove', this.handleMouseMove.bind(this), true);
     }
   
-    // Hide panel when clicking outside
     document.addEventListener('click', (event) => {
       if (this._previewPanel?.isVisible && !this._previewPanel.element.contains(event.target as Node)) {
         this.hidePreviewPanel();
@@ -153,7 +149,6 @@ class PayloadFormatter {
       scrollbar-color: ${styles.scrollThumb} transparent;
     `;
 
-    // Custom scrollbar for webkit browsers (theme-aware)
     const style = document.createElement('style');
     style.textContent = `
       .dynamodb-preview-panel div::-webkit-scrollbar {
@@ -185,14 +180,12 @@ class PayloadFormatter {
       isVisible: false
     };
 
-    // Hide panel when clicking outside
     document.addEventListener('click', (event) => {
       if (this._previewPanel?.isVisible && !this._previewPanel.element.contains(event.target as Node)) {
         this.hidePreviewPanel();
       }
     });
 
-    // Prevent panel from disappearing when hovering over it
     panel.addEventListener('mouseenter', () => {
       if (this._hoverTimeout) {
         clearTimeout(this._hoverTimeout);
@@ -202,11 +195,9 @@ class PayloadFormatter {
   }
 
   private detectAWSTheme(): 'light' | 'dark' {
-    // Check for dark theme indicators in AWS console
     const body = document.body;
     const html = document.documentElement;
     
-    // AWS console uses data-theme or class-based theme switching
     if (body.dataset.theme === 'dark' || html.dataset.theme === 'dark') {
       return 'dark';
     }
@@ -215,12 +206,10 @@ class PayloadFormatter {
       return 'dark';
     }
     
-    // Check computed background color of main elements
     const mainElement = document.querySelector('main') || document.querySelector('[data-testid="main-content"]') || body;
     const computedStyle = window.getComputedStyle(mainElement);
     const backgroundColor = computedStyle.backgroundColor;
     
-    // Parse RGB values to determine if dark
     const rgbMatch = backgroundColor.match(/rgb\((\d+),\s*(\d+),\s*(\d+)\)/);
     if (rgbMatch) {
       const [, r, g, b] = rgbMatch.map(Number);
@@ -228,7 +217,6 @@ class PayloadFormatter {
       return luminance < 0.5 ? 'dark' : 'light';
     }
     
-    // Fallback to system preference
     return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
   }
 
@@ -270,7 +258,6 @@ class PayloadFormatter {
     const target = event.target as HTMLElement;
     const now = Date.now();
   
-    // Throttle mousemove events
     if (now - this._lastMouseMoveTime < this._mouseMoveThrottle) {
       return;
     }
@@ -278,19 +265,15 @@ class PayloadFormatter {
   
     if (target.tagName === 'TEXTAREA' && this.isInDynamoDBConsole()) {
       if (this._currentHoveredTextarea !== target) {
-        // Entered a new textarea
         this.startHoverTimer(target as HTMLTextAreaElement);
       }
     } else {
-      // Check if we moved to the preview panel - if so, don't hide it
       const isOverPreviewPanel = this._previewPanel?.element.contains(target);
       
       if (!isOverPreviewPanel && this._currentHoveredTextarea !== null) {
-        // Moved off a textarea to something else (not the preview panel)
         this._currentHoveredTextarea = null;
         this.clearHoverTimer();
         
-        // Delay hiding to allow moving to the preview panel
         setTimeout(() => {
           if (!this._previewPanel?.element.matches(':hover')) {
             this.hidePreviewPanel();
@@ -301,7 +284,6 @@ class PayloadFormatter {
   }
 
   private startHoverTimer(textarea: HTMLTextAreaElement): void {
-    // Clear any existing timer
     this.clearHoverTimer();
     
     this._currentHoveredTextarea = textarea;
@@ -329,14 +311,12 @@ class PayloadFormatter {
     if (target.tagName === 'TEXTAREA') {
       this.debug('mouseleave on textarea');
       
-      // Clear the current textarea if we're leaving it
       if (this._currentHoveredTextarea === target) {
         this._currentHoveredTextarea = null;
       }
 
       this.clearHoverTimer();
 
-      // Delay hiding to allow moving to the preview panel
       setTimeout(() => {
         if (!this._previewPanel?.element.matches(':hover')) {
           this.hidePreviewPanel();
@@ -368,7 +348,6 @@ class PayloadFormatter {
     const path = window.location.pathname;
     const search = window.location.search;
     
-    // Check various URL patterns for S3 object detail pages
     return (
       path.includes('/object/') ||
       search.includes('prefix=') ||
@@ -376,7 +355,6 @@ class PayloadFormatter {
       search.includes('tab=properties') ||
       url.includes('&prefix=') ||
       document.title.includes('Object overview') ||
-      // Check for object-specific patterns in the URL
       /[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}/.test(url) ||
       /\.json\.gz/.test(url) ||
       /\.json\.gzip/.test(url)
@@ -386,13 +364,11 @@ class PayloadFormatter {
   private handleS3ObjectDetailPage(): void {
     this.debug('Handling S3 object detail page');
     
-    // Check if we already have a preview button to avoid duplicates
     if (document.querySelector('.dynamodb-preview-btn')) {
       this.debug('Preview button already exists, skipping');
       return;
     }
     
-    // Extract filename from URL or page elements
     const fileName = this.extractS3FileNameFromPage();
     if (fileName && this.isGzippedJsonFile(fileName)) {
       this.debug('Found gzipped JSON file on detail page:', fileName);
@@ -403,27 +379,23 @@ class PayloadFormatter {
   }
 
   private extractS3FileNameFromPage(): string | null {
-    // Try to get filename from URL
     const urlParts = window.location.pathname.split('/');
     const lastPart = urlParts[urlParts.length - 1];
     if (lastPart && (lastPart.endsWith('.json.gzip') || lastPart.endsWith('.json.gz'))) {
       return decodeURIComponent(lastPart);
     }
 
-    // Try to get from URL search params
     const urlParams = new URLSearchParams(window.location.search);
     const prefix = urlParams.get('prefix');
     if (prefix && (prefix.endsWith('.json.gzip') || prefix.endsWith('.json.gz'))) {
       return prefix;
     }
 
-    // Try to get from page title or breadcrumbs
     const titleMatch = document.title.match(/([^/]+\.(json\.gzip|json\.gz))/i);
     if (titleMatch) {
       return titleMatch[1];
     }
 
-    // Look for object name in the page
     const selectors = [
       'h1',
       '[data-testid*="object-name"]',
@@ -449,7 +421,6 @@ class PayloadFormatter {
     
     let downloadButton: HTMLElement | null = null;
     
-    // Search for Download button by text content
     const allButtons = Array.from(document.querySelectorAll('button'));
     for (const btn of allButtons) {
       if (btn.textContent?.toLowerCase().includes('download')) {
@@ -498,7 +469,6 @@ class PayloadFormatter {
       await this.previewS3FileFromDetailPage(fileName, downloadButton);
     });
 
-    // Insert the preview button after the download button
     if (downloadButton.parentNode) {
       downloadButton.parentNode.insertBefore(previewButton, downloadButton.nextSibling);
       this.debug('Preview button inserted on detail page');
@@ -520,11 +490,9 @@ class PayloadFormatter {
         this.showCopyFeedback();
       };
     } else {
-      // Normal case: nothing to preview; do nothing
       this.hidePreviewPanel();
     }
   }
-
 
   private showPreviewPanel(content: string, textarea: HTMLTextAreaElement): void {
     if (!this._previewPanel) return;
@@ -550,7 +518,6 @@ class PayloadFormatter {
 
     this.positionPanel(textarea);
 
-    // Reset styles after a delay
     setTimeout(() => {
       if (this._previewPanel) {
         const currentStyles = this.getThemeStyles(this.detectAWSTheme());
@@ -566,21 +533,17 @@ class PayloadFormatter {
     const rect = textarea.getBoundingClientRect();
     const panel = this._previewPanel.element;
     
-    // Position to the right of the textarea, or left if no space
     let left = rect.right + 10;
     let top = rect.top;
 
-    // Check if panel would go off-screen
     if (left + 500 > window.innerWidth) {
-      left = rect.left - 510; // Position to the left
+      left = rect.left - 510;
     }
 
-    // Ensure panel doesn't go below viewport
     if (top + 400 > window.innerHeight) {
       top = window.innerHeight - 400 - 10;
     }
 
-    // Ensure panel doesn't go above viewport
     if (top < 10) {
       top = 10;
     }
@@ -651,7 +614,6 @@ class PayloadFormatter {
   
       return { success: true, data: formattedJson };
     } catch {
-      // Instead of treating this as an error, treat it as "not decodable"
       return { success: false };
     }
   }
@@ -701,16 +663,13 @@ class PayloadFormatter {
 
     this.debug('Initializing S3 support', window.location.href);
     
-    // Special handling for S3 object detail pages
     if (this.isS3ObjectDetailPage()) {
       this.debug('Detected S3 object detail page');
-      // Use multiple attempts with increasing delays for SPA navigation
       setTimeout(() => this.handleS3ObjectDetailPage(), 500);
       setTimeout(() => this.handleS3ObjectDetailPage(), 1500);
       setTimeout(() => this.handleS3ObjectDetailPage(), 3000);
     }
     
-    // Also listen for URL changes (for SPAs)
     let currentUrl = window.location.href;
     const checkUrlChange = (): void => {
       if (window.location.href !== currentUrl) {
@@ -722,17 +681,14 @@ class PayloadFormatter {
       }
     };
     
-    // Check for URL changes periodically
     setInterval(checkUrlChange, 1000);
     
-    // Watch for DOM changes to inject preview buttons
     const observer = new MutationObserver((mutations) => {
       try {
         for (const mutation of mutations) {
           if (mutation.type === 'childList') {
             mutation.addedNodes.forEach((node) => {
               if (node.nodeType === Node.ELEMENT_NODE) {
-                // Throttle processing to avoid excessive calls
                 setTimeout(() => {
                   try {
                     this.processS3Elements(node as Element);
@@ -754,14 +710,12 @@ class PayloadFormatter {
       subtree: true
     });
 
-    // Process existing elements
     this.processS3Elements(document.body);
   }
 
   private processS3Elements(element: Element): void {
     this.debug('Processing S3 elements in:', element.tagName, element.className);
     
-    // Look for various S3 elements - cast broader net
     const selectors = [
       '[data-testid="object-list-item"]',
       '.s3-object-row',
@@ -798,7 +752,6 @@ class PayloadFormatter {
   }
 
   private extractS3FileName(element: Element): string | null {
-    // Try different selectors to find the filename
     const selectors = [
       '[data-testid="object-name"]',
       '.object-name',
@@ -822,7 +775,6 @@ class PayloadFormatter {
       }
     }
 
-    // Fallback: look for any text that looks like a filename
     const allText = element.textContent || '';
     const fileNameMatch = allText.match(/[\w\-.]+\.(json\.gzip|json\.gz)/i);
     if (fileNameMatch) {
@@ -839,14 +791,12 @@ class PayloadFormatter {
   private injectPreviewButton(objectElement: Element, fileName: string): void {
     this.debug('Attempting to inject preview button for:', fileName);
     
-    // Look for existing download button with valid CSS selectors only
     const downloadSelectors = [
       '[data-testid="download-button"]',
       '.download-button',
       '[class*="download"]',
       'button[data-testid*="download"]',
       'a[href*="download"]',
-      // S3 object detail page selectors
       '[data-testid="object-overview-download"]',
       '[data-testid="actions-download"]',
       'button[title*="Download"]',
@@ -855,7 +805,6 @@ class PayloadFormatter {
     
     let downloadButton: HTMLElement | null = null;
     
-    // Try each selector on the object element first
     for (const selector of downloadSelectors) {
       try {
         downloadButton = objectElement.querySelector(selector) as HTMLElement;
@@ -869,7 +818,6 @@ class PayloadFormatter {
       }
     }
     
-    // If not found in object element, try the whole document
     if (!downloadButton) {
       for (const selector of downloadSelectors) {
         try {
@@ -885,9 +833,7 @@ class PayloadFormatter {
       }
     }
     
-    // Fallback: search for buttons/links with "Download" text content
     if (!downloadButton) {
-      // First try within the object element
       const localButtons = Array.from(objectElement.querySelectorAll('button, a'));
       for (const btn of localButtons) {
         if (btn.textContent?.toLowerCase().includes('download')) {
@@ -897,7 +843,6 @@ class PayloadFormatter {
         }
       }
       
-      // If still not found, try the whole document
       if (!downloadButton) {
         const allButtons = Array.from(document.querySelectorAll('button, a'));
         for (const btn of allButtons) {
@@ -921,7 +866,6 @@ class PayloadFormatter {
     try {
       this.debug('Previewing S3 file:', fileName);
       
-      // Get the download URL from the download button
       const downloadButton = objectElement.querySelector('[data-testid="download-button"], .download-button, [class*="download"]') as HTMLElement;
       if (!downloadButton) {
         throw new Error('Download button not found');
@@ -932,7 +876,6 @@ class PayloadFormatter {
         throw new Error('Download URL not found');
       }
 
-      // Fetch the file as binary data
       const response = await fetch(downloadUrl);
       if (!response.ok) {
         throw new Error(`Failed to fetch file: ${response.statusText}`);
@@ -940,13 +883,11 @@ class PayloadFormatter {
 
       const binaryData = new Uint8Array(await response.arrayBuffer());
       
-      // Process the gzipped data
       const decompressedData = this.decompressGzip(binaryData);
       const jsonString = new TextDecoder().decode(decompressedData);
       const parsedJson = JSON.parse(jsonString);
       const formattedJson = JSON.stringify(parsedJson, null, 2);
 
-      // Show in preview panel
       this.showS3PreviewPanel(formattedJson, objectElement as HTMLElement, fileName);
 
     } catch (error) {
@@ -959,30 +900,11 @@ class PayloadFormatter {
     try {
       this.debug('Previewing S3 file from detail page:', fileName);
       
-      // First try to extract URL from the button without clicking it
-      let downloadUrl = this.extractDownloadUrlFromDetailPage(downloadButton);
-      this.debug('URL from button extraction:', downloadUrl);
-      
-      // If that fails, try to extract from page context (looking for pre-signed URLs)
-      if (!downloadUrl) {
-        downloadUrl = this.extractUrlFromPageContext(fileName);
-        this.debug('URL from page context:', downloadUrl);
-      }
-      
-      // If we still don't have a URL, try intercepting the download request
-      if (!downloadUrl) {
-        downloadUrl = await this.interceptDownloadRequest(downloadButton);
-        this.debug('URL from request interception:', downloadUrl);
-      }
-      
-      // If we still don't have a URL, try constructing it (though it will likely fail with 403)
-      if (!downloadUrl) {
-        downloadUrl = this.constructS3DownloadUrl(fileName);
-        this.debug('Constructed URL (may not have auth):', downloadUrl);
-      }
+      // First try to get the authenticated download URL by triggering the download request
+      const downloadUrl = await this.getAuthenticatedDownloadUrl(downloadButton, fileName);
       
       if (!downloadUrl) {
-        throw new Error('Could not determine download URL');
+        throw new Error('Could not obtain authenticated download URL. The file may require special permissions or the AWS console interface may have changed.');
       }
 
       await this.fetchAndDisplayS3File(downloadUrl, fileName, downloadButton);
@@ -993,48 +915,367 @@ class PayloadFormatter {
     }
   }
 
-  private async interceptDownloadRequest(downloadButton: HTMLElement): Promise<string | null> {
-    return new Promise((resolve) => {
-      this.debug('Attempting to intercept download request');
+  private async getAuthenticatedDownloadUrl(downloadButton: HTMLElement, fileName: string): Promise<string | null> {
+    this.debug('Getting authenticated download URL');
+    this.debug('Download button:', downloadButton);
+    this.debug('Download button HTML:', downloadButton.outerHTML);
+    
+    // Method 1: Deep inspection of the download button and its properties
+    let downloadUrl = await this.extractUrlFromDownloadButton(downloadButton);
+    if (downloadUrl) {
+      this.debug('Found URL from download button inspection:', downloadUrl);
+      return downloadUrl;
+    }
+    
+    // Method 2: Try to intercept network requests when the download button is clicked
+    downloadUrl = await this.interceptDownloadRequest(downloadButton);
+    if (downloadUrl) {
+      this.debug('Intercepted download URL:', downloadUrl);
+      return downloadUrl;
+    }
+    
+    // Method 3: Look for pre-signed URLs in the page context
+    downloadUrl = this.extractUrlFromPageContext(fileName);
+    if (downloadUrl) {
+      this.debug('Found URL in page context:', downloadUrl);
+      return downloadUrl;
+    }
+    
+    // Method 4: Try to simulate the download and capture the URL
+    downloadUrl = await this.simulateDownloadAndCaptureUrl(downloadButton);
+    if (downloadUrl) {
+      this.debug('Captured URL from simulated download:', downloadUrl);
+      return downloadUrl;
+    }
+    
+    this.debug('Could not find authenticated download URL');
+    return null;
+  }
+
+  private async extractUrlFromDownloadButton(downloadButton: HTMLElement): Promise<string | null> {
+    this.debug('Deep inspection of download button');
+    
+    // Check if it's an anchor with href
+    if (downloadButton.tagName === 'A') {
+      const href = (downloadButton as HTMLAnchorElement).href;
+      if (href && href.includes('amazonaws.com')) {
+        this.debug('Found href on anchor:', href);
+        return href;
+      }
+    }
+    
+    // Check all attributes for URLs
+    for (let i = 0; i < downloadButton.attributes.length; i++) {
+      const attr = downloadButton.attributes[i];
+      const value = attr.value;
+      if (value && value.includes('amazonaws.com')) {
+        this.debug('Found AWS URL in attribute', attr.name, ':', value);
+        return value;
+      }
+    }
+    
+    // Check data attributes specifically
+    const dataset = (downloadButton as HTMLElement).dataset;
+    for (const key in dataset) {
+      const value = dataset[key];
+      if (value && value.includes('amazonaws.com')) {
+        this.debug('Found AWS URL in dataset', key, ':', value);
+        return value;
+      }
+    }
+    
+    // Check onclick handler for URLs
+    const onclick = downloadButton.getAttribute('onclick');
+    if (onclick) {
+      this.debug('Onclick handler:', onclick);
+      // Look for AWS URLs in the onclick
+      const awsUrlMatch = onclick.match(/https:\/\/[^'"\s,)]+\.amazonaws\.com[^'"\s,)]*/g);
+      if (awsUrlMatch) {
+        this.debug('Found AWS URL in onclick:', awsUrlMatch[0]);
+        return awsUrlMatch[0];
+      }
+    }
+    
+    // Check for JavaScript properties that might contain the URL
+    const buttonAny = downloadButton as any;
+    const propsToCheck = ['downloadUrl', 'url', 'href', 'src', 'action', 'formAction'];
+    for (const prop of propsToCheck) {
+      if (buttonAny[prop] && typeof buttonAny[prop] === 'string' && buttonAny[prop].includes('amazonaws.com')) {
+        this.debug('Found AWS URL in property', prop, ':', buttonAny[prop]);
+        return buttonAny[prop];
+      }
+    }
+    
+    // Check parent elements
+    let parent = downloadButton.parentElement;
+    let depth = 0;
+    while (parent && depth < 5) {
+      if (parent.tagName === 'A') {
+        const href = (parent as HTMLAnchorElement).href;
+        if (href && href.includes('amazonaws.com')) {
+          this.debug('Found AWS URL in parent anchor:', href);
+          return href;
+        }
+      }
       
-      // Store the original fetch function
+      // Check parent's onclick
+      const parentOnclick = parent.getAttribute('onclick');
+      if (parentOnclick) {
+        const awsUrlMatch = parentOnclick.match(/https:\/\/[^'"\s,)]+\.amazonaws\.com[^'"\s,)]*/g);
+        if (awsUrlMatch) {
+          this.debug('Found AWS URL in parent onclick:', awsUrlMatch[0]);
+          return awsUrlMatch[0];
+        }
+      }
+      
+      parent = parent.parentElement;
+      depth++;
+    }
+    
+    // Check if the button is inside a form
+    const form = downloadButton.closest('form') as HTMLFormElement;
+    if (form) {
+      if (form.action && form.action.includes('amazonaws.com')) {
+        this.debug('Found AWS URL in form action:', form.action);
+        return form.action;
+      }
+      
+      // Check form's data attributes
+      const formDataset = (form as HTMLElement).dataset;
+      for (const key in formDataset) {
+        const value = formDataset[key];
+        if (value && value.includes('amazonaws.com')) {
+          this.debug('Found AWS URL in form dataset', key, ':', value);
+          return value;
+        }
+      }
+    }
+    
+    // Look for any AWS URLs in nearby text or hidden inputs
+    const container = downloadButton.closest('[class*="download"], [class*="action"], [class*="button"]') || downloadButton.parentElement;
+    if (container) {
+      const hiddenInputs = Array.from(container.querySelectorAll('input[type="hidden"]'));
+      for (const input of hiddenInputs) {
+        const value = (input as HTMLInputElement).value;
+        if (value && value.includes('amazonaws.com')) {
+          this.debug('Found AWS URL in hidden input:', value);
+          return value;
+        }
+      }
+    }
+    
+    this.debug('No AWS URL found in download button inspection');
+    return null;
+  }
+
+  private async simulateDownloadAndCaptureUrl(downloadButton: HTMLElement): Promise<string | null> {
+    return new Promise((resolve) => {
+      this.debug('Simulating download to capture URL');
+      
+      // Create a more comprehensive network interceptor
       const originalFetch = window.fetch;
+      const originalXHROpen = XMLHttpRequest.prototype.open;
+      const originalXHRSend = XMLHttpRequest.prototype.send;
+      const originalWindowOpen = window.open;
+      const originalAssign = window.location.assign;
+      const originalReplace = window.location.replace;
+      
       let capturedUrl: string | null = null;
       let timeoutId: number;
       
-      // Override fetch to capture AWS requests
+      const restoreOriginals = () => {
+        window.fetch = originalFetch;
+        XMLHttpRequest.prototype.open = originalXHROpen;
+        XMLHttpRequest.prototype.send = originalXHRSend;
+        window.open = originalWindowOpen;
+        window.location.assign = originalAssign;
+        window.location.replace = originalReplace;
+      };
+      
+      const captureUrl = (url: string) => {
+        if (url.includes('amazonaws.com')) {
+          capturedUrl = url;
+          this.debug('Captured URL:', url);
+          restoreOriginals();
+          resolve(capturedUrl);
+        }
+      };
+      
+      // Override fetch
       window.fetch = function(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
         const url = typeof input === 'string' ? input : 
                     input instanceof URL ? input.toString() : 
                     (input as Request).url;
         
-        if (url.includes('amazonaws.com')) {
+        captureUrl(url);
+        return originalFetch.call(this, input, init);
+      };
+      
+      // Override XMLHttpRequest
+      XMLHttpRequest.prototype.open = function(method: string, url: string | URL, async: boolean = true, username?: string | null, password?: string | null): void {
+        captureUrl(url.toString());
+        return originalXHROpen.call(this, method, url, async, username, password);
+      };
+      
+      // Override window.open
+      window.open = function(url?: string | URL): Window | null {
+        if (url) {
+          captureUrl(url.toString());
+        }
+        return null; // Don't actually open the window
+      };
+      
+      // Override location methods
+      window.location.assign = function(url: string): void {
+        captureUrl(url);
+      };
+      
+      window.location.replace = function(url: string): void {
+        captureUrl(url);
+      };
+      
+      // Set timeout
+      timeoutId = window.setTimeout(() => {
+        restoreOriginals();
+        resolve(capturedUrl);
+      }, 2000);
+      
+      // Try multiple ways to trigger the download
+      try {
+        // Method 1: Direct click
+        downloadButton.click();
+        
+        // Method 2: Dispatch events
+        window.setTimeout(() => {
+          const events = ['mousedown', 'mouseup', 'click'];
+          for (const eventType of events) {
+            try {
+              const event = new MouseEvent(eventType, {
+                bubbles: true,
+                cancelable: true,
+                view: window
+              });
+              downloadButton.dispatchEvent(event);
+            } catch (e) {
+              this.debug('Error dispatching event:', e);
+            }
+          }
+        }, 100);
+        
+        // Method 3: Try to call onclick directly
+        window.setTimeout(() => {
+          if (downloadButton.onclick) {
+            try {
+              const clickEvent = new MouseEvent('click', {
+                bubbles: true,
+                cancelable: true,
+                view: window
+              });
+              downloadButton.onclick(clickEvent);
+            } catch (e) {
+              this.debug('Error calling onclick directly:', e);
+            }
+          }
+        }, 200);
+        
+        // Method 4: Try to submit parent form if exists
+        window.setTimeout(() => {
+          const form = downloadButton.closest('form') as HTMLFormElement;
+          if (form) {
+            try {
+              // Don't actually submit, just see if it triggers any network calls
+              const submitEvent = new Event('submit', {
+                bubbles: true,
+                cancelable: true
+              });
+              form.dispatchEvent(submitEvent);
+            } catch (e) {
+              this.debug('Error triggering form submit:', e);
+            }
+          }
+        }, 300);
+        
+      } catch (error) {
+        this.debug('Error simulating download:', error);
+        restoreOriginals();
+        resolve(null);
+      }
+    });
+  }
+
+  private async interceptDownloadRequest(downloadButton: HTMLElement): Promise<string | null> {
+    return new Promise((resolve) => {
+      this.debug('Attempting to intercept download request');
+      
+      const originalFetch = window.fetch;
+      const originalXHROpen = XMLHttpRequest.prototype.open;
+      let capturedUrl: string | null = null;
+      let timeoutId: number;
+      
+      // Override fetch
+      window.fetch = function(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
+        const url = typeof input === 'string' ? input : 
+                    input instanceof URL ? input.toString() : 
+                    (input as Request).url;
+        
+        if (url.includes('amazonaws.com') && (url.includes('X-Amz-') || url.includes('.json.gz'))) {
           capturedUrl = url;
-          // Restore original fetch before resolving
           window.fetch = originalFetch;
+          XMLHttpRequest.prototype.open = originalXHROpen;
           resolve(capturedUrl);
-          // Don't actually make the request
-          return Promise.reject(new Error('Request intercepted'));
+          return Promise.reject(new Error('Request intercepted for preview'));
         }
         
         return originalFetch.call(this, input, init);
       };
       
-      // Set a timeout to restore original fetch
+      // Override XMLHttpRequest
+      XMLHttpRequest.prototype.open = function(method: string, url: string | URL, async: boolean = true, username?: string | null, password?: string | null): void {
+        const urlStr = url.toString();
+        if (urlStr.includes('amazonaws.com') && (urlStr.includes('X-Amz-') || urlStr.includes('.json.gz'))) {
+          capturedUrl = urlStr;
+          window.fetch = originalFetch;
+          XMLHttpRequest.prototype.open = originalXHROpen;
+          resolve(capturedUrl);
+          return;
+        }
+        
+        return originalXHROpen.call(this, method, url, async, username, password);
+      };
+      
+      // Set timeout to restore functions
       timeoutId = window.setTimeout(() => {
         window.fetch = originalFetch;
-        if (!capturedUrl) {
-          resolve(null);
-        }
-      }, 2000);
+        XMLHttpRequest.prototype.open = originalXHROpen;
+        resolve(capturedUrl);
+      }, 3000);
       
-      // Try to trigger the download
+      // Trigger the download
       try {
-        downloadButton.click();
+        // Try clicking the button with different event types
+        const events = ['click', 'mousedown', 'mouseup'];
+        for (const eventType of events) {
+          const event = new MouseEvent(eventType, {
+            bubbles: true,
+            cancelable: true,
+            view: window
+          });
+          downloadButton.dispatchEvent(event);
+          
+          // Small delay between events
+          setTimeout(() => {}, 10);
+        }
+        
+        // Also try direct click
+        if (downloadButton.onclick) {
+          downloadButton.onclick(new MouseEvent('click'));
+        }
+        
       } catch (error) {
-        this.debug('Error clicking download button:', error);
+        this.debug('Error triggering download:', error);
         window.clearTimeout(timeoutId);
         window.fetch = originalFetch;
+        XMLHttpRequest.prototype.open = originalXHROpen;
         resolve(null);
       }
     });
@@ -1043,59 +1284,44 @@ class PayloadFormatter {
   private extractUrlFromPageContext(fileName: string): string | null {
     this.debug('Extracting URL from page context for:', fileName);
     
-    // Look for any AWS pre-signed URLs in the page that might be for our file
+    // Look for pre-signed URLs in links
     const allLinks = Array.from(document.querySelectorAll('a[href*="amazonaws.com"]')) as HTMLAnchorElement[];
     for (const link of allLinks) {
-      if (link.href.includes(fileName) || link.href.includes('X-Amz-')) {
+      if ((link.href.includes(fileName) || link.href.includes('X-Amz-')) && link.href.includes('amazonaws.com')) {
         this.debug('Found potential pre-signed link:', link.href);
         return link.href;
       }
     }
     
-    // Look in script tags for pre-signed URLs
+    // Look in script tags
     const scripts = Array.from(document.querySelectorAll('script'));
     for (const script of scripts) {
       const content = script.textContent || '';
       
-      // Look for pre-signed URLs with X-Amz parameters
-      const preSignedMatch = content.match(/https:\/\/[^"'\s]+\.amazonaws\.com[^"'\s]*X-Amz-[^"'\s]*/g);
-      if (preSignedMatch) {
-        for (const url of preSignedMatch) {
+      // Look for pre-signed URLs with authentication
+      const preSignedMatches = content.match(/https:\/\/[^"'\s]+\.amazonaws\.com[^"'\s]*X-Amz-[^"'\s]*/g);
+      if (preSignedMatches) {
+        for (const url of preSignedMatches) {
           if (url.includes(fileName.replace(/\./g, '\\.'))) {
             this.debug('Found pre-signed URL in script:', url);
             return url;
           }
         }
-      }
-      
-      // Fallback: look for any amazonaws.com URL mentioning our file
-      const urlMatch = content.match(new RegExp(`https://[^\\s"']+amazonaws\\.com[^\\s"']*${fileName.replace('.', '\\.')}[^\\s"']*`, 'g'));
-      if (urlMatch && urlMatch.length > 0) {
-        this.debug('Found AWS URL in script:', urlMatch[0]);
-        return urlMatch[0];
-      }
-    }
-    
-    // Look for URLs in data attributes across the page
-    const elementsWithData = Array.from(document.querySelectorAll('[data-*]'));
-    for (const element of elementsWithData) {
-      const dataset = (element as HTMLElement).dataset;
-      for (const key in dataset) {
-        const value = dataset[key];
-        if (value && value.includes('amazonaws.com') && value.includes(fileName)) {
-          this.debug('Found URL in data attribute:', value);
-          return value;
+        // If we found pre-signed URLs but none match the filename exactly, try the first one
+        if (preSignedMatches.length > 0) {
+          this.debug('Found generic pre-signed URL:', preSignedMatches[0]);
+          return preSignedMatches[0];
         }
       }
     }
     
-    // Look for URLs in the page HTML as last resort
-    const pageContent = document.documentElement.outerHTML;
-    const preSignedMatch = pageContent.match(/https:\/\/[^"'\s]+\.amazonaws\.com[^"'\s]*X-Amz-[^"'\s]*/g);
-    if (preSignedMatch) {
-      for (const url of preSignedMatch) {
-        if (url.includes(fileName.replace(/\./g, '\\.'))) {
-          this.debug('Found pre-signed URL in page content:', url);
+    // Look in the HTML for any AWS URLs
+    const htmlContent = document.documentElement.innerHTML;
+    const awsUrlMatches = htmlContent.match(/https:\/\/[^"'\s]+\.amazonaws\.com[^"'\s]*X-Amz-[^"'\s]*/g);
+    if (awsUrlMatches) {
+      for (const url of awsUrlMatches) {
+        if (url.includes(fileName)) {
+          this.debug('Found AWS URL in HTML:', url);
           return url;
         }
       }
@@ -1104,61 +1330,27 @@ class PayloadFormatter {
     return null;
   }
 
-  private async captureDownloadUrl(downloadButton: HTMLElement): Promise<string | null> {
-    return new Promise((resolve) => {
-      this.debug('Attempting to capture download URL by intercepting click');
-      
-      // Store original functions
-      const originalWindowOpen = window.open;
-      
-      let capturedUrl: string | null = null;
-      let timeoutId: number;
-      
-      // Override window.open to capture the URL
-      window.open = function(url?: string | URL): Window | null {
-        if (url) {
-          capturedUrl = url.toString();
-          resolve(capturedUrl);
-        }
-        return null;
-      };
-      
-      // Set a timeout to restore original functions
-      timeoutId = window.setTimeout(() => {
-        window.open = originalWindowOpen;
-        if (!capturedUrl) {
-          resolve(null);
-        }
-      }, 1000);
-      
-      // Simulate click on the download button
-      try {
-        downloadButton.click();
-      } catch (error) {
-        this.debug('Error clicking download button:', error);
-        window.clearTimeout(timeoutId);
-        window.open = originalWindowOpen;
-        resolve(null);
-      }
-    });
-  }
-
   private extractDownloadUrlFromDetailPage(downloadButton: HTMLElement): string | null {
     this.debug('Extracting download URL from button:', downloadButton);
-    this.debug('Button tagName:', downloadButton.tagName);
-    this.debug('Button attributes:', downloadButton.attributes);
-    this.debug('Button innerHTML:', downloadButton.innerHTML);
     
-    // Try various methods to get the download URL
     if (downloadButton.tagName === 'A') {
       const href = (downloadButton as HTMLAnchorElement).href;
       this.debug('Found href on anchor:', href);
       return href;
     }
 
-    // Look for onclick handler or data attributes
+    // Check for various URL attributes
+    const urlAttributes = ['data-url', 'data-href', 'data-download-url', 'data-presigned-url'];
+    for (const attr of urlAttributes) {
+      const url = downloadButton.getAttribute(attr);
+      if (url) {
+        this.debug('Found URL in attribute', attr, url);
+        return url;
+      }
+    }
+
+    // Look for onclick handler
     const onclick = downloadButton.getAttribute('onclick');
-    this.debug('Button onclick:', onclick);
     if (onclick) {
       const urlMatch = onclick.match(/https?:\/\/[^\s'",)]+/);
       if (urlMatch) {
@@ -1167,148 +1359,19 @@ class PayloadFormatter {
       }
     }
 
-    // Look for data attributes
-    const dataUrl = downloadButton.dataset.url || downloadButton.dataset.href;
-    this.debug('Button data attributes:', downloadButton.dataset);
-    if (dataUrl) {
-      this.debug('Found data URL:', dataUrl);
-      return dataUrl;
-    }
-
-    // Check all attributes for URLs
-    for (let i = 0; i < downloadButton.attributes.length; i++) {
-      const attr = downloadButton.attributes[i];
-      if (attr.value.match(/https?:\/\//)) {
-        this.debug('Found URL in attribute', attr.name, attr.value);
-        return attr.value;
-      }
-    }
-
-    // Look for parent or child elements with URLs
-    const parentElement = downloadButton.parentElement;
-    if (parentElement) {
-      const parentLink = parentElement.querySelector('a[href]') as HTMLAnchorElement;
-      if (parentLink) {
-        this.debug('Found parent link:', parentLink.href);
-        return parentLink.href;
-      }
-    }
-
-    // Check if the button has a form action
-    const form = downloadButton.closest('form') as HTMLFormElement;
-    if (form?.action) {
-      this.debug('Found form action:', form.action);
-      return form.action;
-    }
-
-    this.debug('No download URL found in button');
-    return null;
-  }
-
-  private constructS3DownloadUrl(fileName: string): string | null {
-    this.debug('Constructing S3 download URL for:', fileName);
-    this.debug('Current URL:', window.location.href);
-    
-    const url = new URL(window.location.href);
-    const pathParts = url.pathname.split('/').filter(part => part.length > 0);
-    const urlParams = new URLSearchParams(url.search);
-    
-    this.debug('URL path parts:', pathParts);
-    
-    // Convert URLSearchParams to object for debugging (compatible with older TypeScript)
-    const paramsObj: { [key: string]: string } = {};
-    urlParams.forEach((value, key) => {
-      paramsObj[key] = value;
-    });
-    this.debug('URL params:', paramsObj);
-    
-    // Find bucket name in the path or params
-    let bucketIndex = pathParts.indexOf('buckets');
-    if (bucketIndex === -1) {
-      bucketIndex = pathParts.indexOf('bucket');
-    }
-    
-    let bucketName = '';
-    let objectKey = fileName;
-    
-    if (bucketIndex !== -1 && bucketIndex + 1 < pathParts.length) {
-      bucketName = pathParts[bucketIndex + 1];
-      this.debug('Found bucket name from path:', bucketName);
-    } else {
-      // Try to extract bucket name from URL params or other sources
-      const bucketParam = urlParams.get('bucket');
-      if (bucketParam) {
-        bucketName = bucketParam;
-        this.debug('Found bucket name from params:', bucketName);
-      }
-    }
-    
-    if (!bucketName) {
-      this.debug('Could not determine bucket name');
-      return null;
-    }
-    
-    // Determine the object key (full path to the file)
-    const prefix = urlParams.get('prefix');
-    if (prefix) {
-      if (prefix.endsWith(fileName)) {
-        objectKey = prefix;
-      } else {
-        objectKey = prefix.endsWith('/') ? prefix + fileName : prefix + '/' + fileName;
-      }
-      this.debug('Using prefix-based object key:', objectKey);
-    } else {
-      // Try to get object key from the URL path after bucket
-      if (bucketIndex !== -1 && bucketIndex + 2 < pathParts.length) {
-        const pathAfterBucket = pathParts.slice(bucketIndex + 2);
-        if (pathAfterBucket.length > 0) {
-          objectKey = pathAfterBucket.join('/');
-          if (!objectKey.endsWith(fileName)) {
-            objectKey = objectKey.endsWith('/') ? objectKey + fileName : objectKey + '/' + fileName;
-          }
-          this.debug('Constructed object key from path:', objectKey);
+    // Check parent elements
+    let parent = downloadButton.parentElement;
+    while (parent && parent !== document.body) {
+      if (parent.tagName === 'A') {
+        const href = (parent as HTMLAnchorElement).href;
+        if (href && href.includes('amazonaws.com')) {
+          this.debug('Found parent link:', href);
+          return href;
         }
       }
+      parent = parent.parentElement;
     }
-    
-    // Extract region from URL
-    const region = this.extractRegionFromUrl() || 'us-east-1';
-    this.debug('Using region:', region);
-    
-    // Construct the S3 URL
-    const constructedUrl = `https://${bucketName}.s3.${region}.amazonaws.com/${encodeURIComponent(objectKey)}`;
-    this.debug('Final constructed URL:', constructedUrl);
-    
-    return constructedUrl;
-  }
 
-  private extractRegionFromUrl(): string | null {
-    // Try multiple methods to extract region
-    const url = new URL(window.location.href);
-    
-    // Method 1: From hostname
-    const regionMatch = url.hostname.match(/\.([^.]+)\.console\.aws\.amazon\.com/);
-    if (regionMatch) {
-      this.debug('Found region from hostname:', regionMatch[1]);
-      return regionMatch[1];
-    }
-    
-    // Method 2: From URL path
-    const pathMatch = url.pathname.match(/\/([^\/]+)\/s3/);
-    if (pathMatch) {
-      this.debug('Found region from path:', pathMatch[1]);
-      return pathMatch[1];
-    }
-    
-    // Method 3: From URL params
-    const urlParams = new URLSearchParams(url.search);
-    const regionParam = urlParams.get('region');
-    if (regionParam) {
-      this.debug('Found region from params:', regionParam);
-      return regionParam;
-    }
-    
-    this.debug('Could not determine region, using default');
     return null;
   }
 
@@ -1322,42 +1385,35 @@ class PayloadFormatter {
 
     const binaryData = new Uint8Array(await response.arrayBuffer());
     
-    // Process the gzipped data
     const decompressedData = this.decompressGzip(binaryData);
     const jsonString = new TextDecoder().decode(decompressedData);
     const parsedJson = JSON.parse(jsonString);
     const formattedJson = JSON.stringify(parsedJson, null, 2);
 
-    // Show in preview panel
     this.showS3PreviewPanel(formattedJson, anchorElement, fileName);
   }
 
   private extractDownloadUrl(downloadButton: HTMLElement): string | null {
-    // Try to get URL from href attribute
     if (downloadButton.tagName === 'A') {
       return (downloadButton as HTMLAnchorElement).href;
     }
 
-    // Look for parent link
     const parentLink = downloadButton.closest('a[href]') as HTMLAnchorElement;
     if (parentLink) {
       return parentLink.href;
     }
 
-    // Look for data attributes
     const dataUrl = downloadButton.dataset.url || downloadButton.dataset.href;
     if (dataUrl) {
       return dataUrl;
     }
 
-    // Fallback: try to trigger click and capture the URL (more complex)
     return null;
   }
 
   private showS3PreviewPanel(content: string, anchorElement: HTMLElement, fileName: string): void {
     if (!this._previewPanel) return;
 
-    // Update panel title for S3
     const titleElement = this._previewPanel.element.querySelector('span');
     if (titleElement) {
       titleElement.textContent = `Preview: ${fileName}`;
@@ -1367,10 +1423,8 @@ class PayloadFormatter {
     this._previewPanel.isVisible = true;
     this._previewPanel.element.style.display = 'block';
 
-    // Position relative to the object row
     this.positionS3Panel(anchorElement);
 
-    // Set up copy functionality
     this._previewPanel.copyButton.onclick = (): void => {
       this.copyToClipboard(content);
       this.showCopyFeedback();
@@ -1383,21 +1437,17 @@ class PayloadFormatter {
     const rect = anchorElement.getBoundingClientRect();
     const panel = this._previewPanel.element;
     
-    // Position to the right of the element, or left if no space
     let left = rect.right + 10;
     let top = rect.top;
 
-    // Check if panel would go off-screen
     if (left + 500 > window.innerWidth) {
-      left = rect.left - 510; // Position to the left
+      left = rect.left - 510;
     }
 
-    // Ensure panel doesn't go below viewport
     if (top + 400 > window.innerHeight) {
       top = window.innerHeight - 400 - 10;
     }
 
-    // Ensure panel doesn't go above viewport
     if (top < 10) {
       top = 10;
     }
@@ -1407,7 +1457,6 @@ class PayloadFormatter {
   }
 
   private showS3ErrorNotification(message: string): void {
-    // Create a temporary error notification
     const notification = document.createElement('div');
     notification.textContent = message;
     
@@ -1418,18 +1467,18 @@ class PayloadFormatter {
       position: fixed;
       top: 20px;
       right: 20px;
-      background: ${styles.errorText};
+      background: #e53e3e;
       color: white;
       padding: 12px 16px;
       border-radius: 4px;
       z-index: 10001;
       font-size: 14px;
       max-width: 400px;
+      box-shadow: 0 4px 12px rgba(0,0,0,0.3);
     `;
 
     document.body.appendChild(notification);
 
-    // Remove after 5 seconds
     setTimeout(() => {
       if (notification.parentNode) {
         notification.parentNode.removeChild(notification);
