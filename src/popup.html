@@ -27,13 +27,21 @@
   </style>
 </head>
 <body>
-  <h1>DynamoDB Payload Formatter</h1>
-  <p>To use this extension:</p>
+  <h1>AWS Gzipped JSON Formatter</h1>
+  <p>This extension works in two ways:</p>
+  
   <div class="instruction">
-    1. Navigate to DynamoDB in AWS Console<br>
-    2. Right-click on a textarea containing base64 gzipped JSON<br>
-    3. Select "Copy as formatted JSON"
+    <strong>DynamoDB:</strong><br>
+    1. Right-click on textarea with base64 gzipped JSON<br>
+    2. Select "Copy as formatted JSON"<br>
+    3. Or hover over textarea for preview
   </div>
-  <p>The formatted JSON will be copied to your clipboard.</p>
+
+  <div class="instruction">
+    <strong>S3:</strong><br>
+    1. Navigate to S3 bucket<br>
+    2. Find .json.gzip or .json.gz files<br>
+    3. Click "Preview" button next to download
+  </div>
 </body>
 </html>

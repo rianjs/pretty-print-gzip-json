@@ -16,22 +16,22 @@ chrome.contextMenus.onClicked.addListener(async (info, tab) => {
         chrome.notifications.create({
           type: 'basic',
           iconUrl: 'icons/gzip-json-water-48.png',
-          title: 'DynamoDB Payload Formatter',
+          title: 'AWS Gzipped JSON Formatter',
           message: 'Formatted JSON copied to clipboard!'
         });
       } else {
         chrome.notifications.create({
           type: 'basic',
           iconUrl: 'icons/gzip-json-water-48.png',
-          title: 'DynamoDB Payload Formatter',
+          title: 'AWS Gzipped JSON Formatter',
           message: `Error: ${response.error}`
         });
       }
-    } catch (error) {
+    } catch {
       chrome.notifications.create({
         type: 'basic',
         iconUrl: 'icons/gzip-json-water-48.png',
-        title: 'DynamoDB Payload Formatter',
+        title: 'AWS Gzipped JSON Formatter',
         message: 'Failed to format payload. Make sure you\'re right-clicking on a textarea.'
       });
     }
