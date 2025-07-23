@@ -270,11 +270,20 @@ class PayloadFormatter {
         this.startHoverTimer(target as HTMLTextAreaElement);
       }
     } else {
-      // Moved off a textarea to something else
-      if (this._currentHoveredTextarea !== null) {
+      // Check if we moved to the preview panel - if so, don't hide it
+      const isOverPreviewPanel = this._previewPanel?.element.contains(target);
+      
+      if (!isOverPreviewPanel && this._currentHoveredTextarea !== null) {
+        // Moved off a textarea to something else (not the preview panel)
         this._currentHoveredTextarea = null;
         this.clearHoverTimer();
-        this.hidePreviewPanel();
+        
+        // Delay hiding to allow moving to the preview panel
+        setTimeout(() => {
+          if (!this._previewPanel?.element.matches(':hover')) {
+            this.hidePreviewPanel();
+          }
+        }, 100);
       }
     }
   }
