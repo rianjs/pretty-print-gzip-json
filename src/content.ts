@@ -466,7 +466,7 @@ class PayloadFormatter {
     previewButton.addEventListener('click', async (event): Promise<void> => {
       event.preventDefault();
       event.stopPropagation();
-      await this.previewS3FileFromDetailPage(fileName, downloadButton);
+      await this.previewS3FileFromDetailPageWithFallback(fileName, downloadButton);
     });
 
     if (downloadButton.parentNode) {
@@ -862,6 +862,144 @@ class PayloadFormatter {
     }
   }
 
+  // Updated S3 preview methods using blob interception
+  private async previewS3FileFromDetailPageWithFallback(fileName: string, downloadButton: HTMLElement): Promise<void> {
+    try {
+      this.debug('Previewing S3 file from detail page:', fileName);
+      
+      // First try the blob interception approach
+      const fileContent = await this.interceptDownloadBlob(downloadButton, fileName);
+      
+      if (fileContent) {
+        const decompressedData = this.decompressGzip(fileContent);
+        const jsonString = new TextDecoder().decode(decompressedData);
+        const parsedJson = JSON.parse(jsonString);
+        const formattedJson = JSON.stringify(parsedJson, null, 2);
+        
+        this.showS3PreviewPanel(formattedJson, downloadButton, fileName);
+        return;
+      }
+      
+      // If blob interception fails, offer file input fallback
+      this.showFallbackDialog(fileName, downloadButton);
+      
+    } catch (error) {
+      this.debug('Error in primary preview method:', error);
+      this.showFallbackDialog(fileName, downloadButton);
+    }
+  }
+
+  private async interceptDownloadBlob(downloadButton: HTMLElement, fileName: string): Promise<Uint8Array | null> {
+    return new Promise((resolve) => {
+      this.debug('Intercepting download blob for:', fileName);
+      
+      // Store original link creation
+      const originalCreateElement = document.createElement;
+      let blobUrl: string | null = null;
+      let interceptedBlob: Blob | null = null;
+      
+      // Override createElement to catch blob downloads
+      document.createElement = function(tagName: string): HTMLElement {
+        const element = originalCreateElement.call(document, tagName);
+        
+        if (tagName.toLowerCase() === 'a') {
+          const anchor = element as HTMLAnchorElement;
+          const originalSetAttribute = anchor.setAttribute;
+          
+          anchor.setAttribute = function(name: string, value: string) {
+            if (name === 'href' && value.startsWith('blob:')) {
+              blobUrl = value;
+              console.debug('Intercepted blob URL:', blobUrl);
+              
+              // Get the blob from the URL
+              fetch(blobUrl)
+                .then(response => response.blob())
+                .then(blob => {
+                  interceptedBlob = blob;
+                  console.debug('Successfully intercepted blob, size:', blob.size);
+                })
+                .catch(error => {
+                  console.debug('Error fetching blob:', error);
+                });
+            }
+            return originalSetAttribute.call(this, name, value);
+          };
+        }
+        
+        return element;
+      };
+      
+      // Also intercept URL.createObjectURL
+      const originalCreateObjectURL = URL.createObjectURL;
+      URL.createObjectURL = function(object: Blob | MediaSource): string {
+        const url = originalCreateObjectURL.call(this, object);
+        
+        if (object instanceof Blob) {
+          interceptedBlob = object;
+          console.debug('Intercepted blob via createObjectURL, size:', object.size);
+        }
+        
+        return url;
+      };
+      
+      // Set up cleanup
+      const cleanup = () => {
+        document.createElement = originalCreateElement;
+        URL.createObjectURL = originalCreateObjectURL;
+      };
+      
+      // Set timeout
+      const timeoutId = setTimeout(async () => {
+        cleanup();
+        
+        if (interceptedBlob) {
+          try {
+            const arrayBuffer = await interceptedBlob.arrayBuffer();
+            const uint8Array = new Uint8Array(arrayBuffer);
+            console.debug('Successfully converted blob to Uint8Array, size:', uint8Array.length);
+            resolve(uint8Array);
+          } catch (error) {
+            console.debug('Error converting blob to Uint8Array:', error);
+            resolve(null);
+          }
+        } else {
+          console.debug('No blob intercepted');
+          resolve(null);
+        }
+      }, 3000);
+      
+      // Trigger the download
+      try {
+        // Create a more natural click event
+        const clickEvent = new MouseEvent('click', {
+          bubbles: true,
+          cancelable: true,
+          view: window,
+          detail: 1,
+          screenX: 0,
+          screenY: 0,
+          clientX: 0,
+          clientY: 0,
+          button: 0,
+          buttons: 1
+        });
+        
+        downloadButton.dispatchEvent(clickEvent);
+        
+        // Also try direct click
+        if (downloadButton.click) {
+          setTimeout(() => downloadButton.click(), 100);
+        }
+        
+      } catch (error) {
+        this.debug('Error triggering download:', error);
+        cleanup();
+        clearTimeout(timeoutId);
+        resolve(null);
+      }
+    });
+  }
+
   private async previewS3File(fileName: string, objectElement: Element): Promise<void> {
     try {
       this.debug('Previewing S3 file:', fileName);
@@ -871,19 +1009,14 @@ class PayloadFormatter {
         throw new Error('Download button not found');
       }
 
-      const downloadUrl = this.extractDownloadUrl(downloadButton);
-      if (!downloadUrl) {
-        throw new Error('Download URL not found');
-      }
-
-      const response = await fetch(downloadUrl);
-      if (!response.ok) {
-        throw new Error(`Failed to fetch file: ${response.statusText}`);
-      }
-
-      const binaryData = new Uint8Array(await response.arrayBuffer());
+      // Use blob interception instead of URL fetching
+      const fileContent = await this.interceptDownloadBlob(downloadButton, fileName);
       
-      const decompressedData = this.decompressGzip(binaryData);
+      if (!fileContent) {
+        throw new Error('Could not intercept file download');
+      }
+
+      const decompressedData = this.decompressGzip(fileContent);
       const jsonString = new TextDecoder().decode(decompressedData);
       const parsedJson = JSON.parse(jsonString);
       const formattedJson = JSON.stringify(parsedJson, null, 2);
@@ -896,519 +1029,193 @@ class PayloadFormatter {
     }
   }
 
-  private async previewS3FileFromDetailPage(fileName: string, downloadButton: HTMLElement): Promise<void> {
-    try {
-      this.debug('Previewing S3 file from detail page:', fileName);
-      
-      // First try to get the authenticated download URL by triggering the download request
-      const downloadUrl = await this.getAuthenticatedDownloadUrl(downloadButton, fileName);
-      
-      if (!downloadUrl) {
-        throw new Error('Could not obtain authenticated download URL. The file may require special permissions or the AWS console interface may have changed.');
-      }
-
-      await this.fetchAndDisplayS3File(downloadUrl, fileName, downloadButton);
-
-    } catch (error) {
-      this.debug('Error previewing S3 file from detail page:', error);
-      this.showS3ErrorNotification(`Failed to preview ${fileName}: ${error instanceof Error ? error.message : 'Unknown error'}`);
-    }
-  }
-
-  private async getAuthenticatedDownloadUrl(downloadButton: HTMLElement, fileName: string): Promise<string | null> {
-    this.debug('Getting authenticated download URL');
-    this.debug('Download button:', downloadButton);
-    this.debug('Download button HTML:', downloadButton.outerHTML);
+  private createFileInputFallback(fileName: string, downloadButton: HTMLElement): void {
+    const fileInput = document.createElement('input');
+    fileInput.type = 'file';
+    fileInput.accept = '.gz,.gzip,.json.gz,.json.gzip';
+    fileInput.style.display = 'none';
     
-    // Method 1: Deep inspection of the download button and its properties
-    let downloadUrl = await this.extractUrlFromDownloadButton(downloadButton);
-    if (downloadUrl) {
-      this.debug('Found URL from download button inspection:', downloadUrl);
-      return downloadUrl;
-    }
-    
-    // Method 2: Try to intercept network requests when the download button is clicked
-    downloadUrl = await this.interceptDownloadRequest(downloadButton);
-    if (downloadUrl) {
-      this.debug('Intercepted download URL:', downloadUrl);
-      return downloadUrl;
-    }
-    
-    // Method 3: Look for pre-signed URLs in the page context
-    downloadUrl = this.extractUrlFromPageContext(fileName);
-    if (downloadUrl) {
-      this.debug('Found URL in page context:', downloadUrl);
-      return downloadUrl;
-    }
-    
-    // Method 4: Try to simulate the download and capture the URL
-    downloadUrl = await this.simulateDownloadAndCaptureUrl(downloadButton);
-    if (downloadUrl) {
-      this.debug('Captured URL from simulated download:', downloadUrl);
-      return downloadUrl;
-    }
-    
-    this.debug('Could not find authenticated download URL');
-    return null;
-  }
-
-  private async extractUrlFromDownloadButton(downloadButton: HTMLElement): Promise<string | null> {
-    this.debug('Deep inspection of download button');
-    
-    // Check if it's an anchor with href
-    if (downloadButton.tagName === 'A') {
-      const href = (downloadButton as HTMLAnchorElement).href;
-      if (href && href.includes('amazonaws.com')) {
-        this.debug('Found href on anchor:', href);
-        return href;
-      }
-    }
-    
-    // Check all attributes for URLs
-    for (let i = 0; i < downloadButton.attributes.length; i++) {
-      const attr = downloadButton.attributes[i];
-      const value = attr.value;
-      if (value && value.includes('amazonaws.com')) {
-        this.debug('Found AWS URL in attribute', attr.name, ':', value);
-        return value;
-      }
-    }
-    
-    // Check data attributes specifically
-    const dataset = (downloadButton as HTMLElement).dataset;
-    for (const key in dataset) {
-      const value = dataset[key];
-      if (value && value.includes('amazonaws.com')) {
-        this.debug('Found AWS URL in dataset', key, ':', value);
-        return value;
-      }
-    }
-    
-    // Check onclick handler for URLs
-    const onclick = downloadButton.getAttribute('onclick');
-    if (onclick) {
-      this.debug('Onclick handler:', onclick);
-      // Look for AWS URLs in the onclick
-      const awsUrlMatch = onclick.match(/https:\/\/[^'"\s,)]+\.amazonaws\.com[^'"\s,)]*/g);
-      if (awsUrlMatch) {
-        this.debug('Found AWS URL in onclick:', awsUrlMatch[0]);
-        return awsUrlMatch[0];
-      }
-    }
-    
-    // Check for JavaScript properties that might contain the URL
-    const buttonAny = downloadButton as any;
-    const propsToCheck = ['downloadUrl', 'url', 'href', 'src', 'action', 'formAction'];
-    for (const prop of propsToCheck) {
-      if (buttonAny[prop] && typeof buttonAny[prop] === 'string' && buttonAny[prop].includes('amazonaws.com')) {
-        this.debug('Found AWS URL in property', prop, ':', buttonAny[prop]);
-        return buttonAny[prop];
-      }
-    }
-    
-    // Check parent elements
-    let parent = downloadButton.parentElement;
-    let depth = 0;
-    while (parent && depth < 5) {
-      if (parent.tagName === 'A') {
-        const href = (parent as HTMLAnchorElement).href;
-        if (href && href.includes('amazonaws.com')) {
-          this.debug('Found AWS URL in parent anchor:', href);
-          return href;
-        }
-      }
-      
-      // Check parent's onclick
-      const parentOnclick = parent.getAttribute('onclick');
-      if (parentOnclick) {
-        const awsUrlMatch = parentOnclick.match(/https:\/\/[^'"\s,)]+\.amazonaws\.com[^'"\s,)]*/g);
-        if (awsUrlMatch) {
-          this.debug('Found AWS URL in parent onclick:', awsUrlMatch[0]);
-          return awsUrlMatch[0];
-        }
-      }
-      
-      parent = parent.parentElement;
-      depth++;
-    }
-    
-    // Check if the button is inside a form
-    const form = downloadButton.closest('form') as HTMLFormElement;
-    if (form) {
-      if (form.action && form.action.includes('amazonaws.com')) {
-        this.debug('Found AWS URL in form action:', form.action);
-        return form.action;
-      }
-      
-      // Check form's data attributes
-      const formDataset = (form as HTMLElement).dataset;
-      for (const key in formDataset) {
-        const value = formDataset[key];
-        if (value && value.includes('amazonaws.com')) {
-          this.debug('Found AWS URL in form dataset', key, ':', value);
-          return value;
-        }
-      }
-    }
-    
-    // Look for any AWS URLs in nearby text or hidden inputs
-    const container = downloadButton.closest('[class*="download"], [class*="action"], [class*="button"]') || downloadButton.parentElement;
-    if (container) {
-      const hiddenInputs = Array.from(container.querySelectorAll('input[type="hidden"]'));
-      for (const input of hiddenInputs) {
-        const value = (input as HTMLInputElement).value;
-        if (value && value.includes('amazonaws.com')) {
-          this.debug('Found AWS URL in hidden input:', value);
-          return value;
-        }
-      }
-    }
-    
-    this.debug('No AWS URL found in download button inspection');
-    return null;
-  }
-
-  private async simulateDownloadAndCaptureUrl(downloadButton: HTMLElement): Promise<string | null> {
-    return new Promise((resolve) => {
-      this.debug('Simulating download to capture URL');
-      
-      // Create a more comprehensive network interceptor
-      const originalFetch = window.fetch;
-      const originalXHROpen = XMLHttpRequest.prototype.open;
-      const originalXHRSend = XMLHttpRequest.prototype.send;
-      const originalWindowOpen = window.open;
-      const originalAssign = window.location.assign;
-      const originalReplace = window.location.replace;
-      
-      let capturedUrl: string | null = null;
-      let timeoutId: number;
-      
-      const restoreOriginals = () => {
-        window.fetch = originalFetch;
-        XMLHttpRequest.prototype.open = originalXHROpen;
-        XMLHttpRequest.prototype.send = originalXHRSend;
-        window.open = originalWindowOpen;
-        window.location.assign = originalAssign;
-        window.location.replace = originalReplace;
-      };
-      
-      const captureUrl = (url: string) => {
-        if (url.includes('amazonaws.com')) {
-          capturedUrl = url;
-          this.debug('Captured URL:', url);
-          restoreOriginals();
-          resolve(capturedUrl);
-        }
-      };
-      
-      // Override fetch
-      window.fetch = function(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
-        const url = typeof input === 'string' ? input : 
-                    input instanceof URL ? input.toString() : 
-                    (input as Request).url;
-        
-        captureUrl(url);
-        return originalFetch.call(this, input, init);
-      };
-      
-      // Override XMLHttpRequest
-      XMLHttpRequest.prototype.open = function(method: string, url: string | URL, async: boolean = true, username?: string | null, password?: string | null): void {
-        captureUrl(url.toString());
-        return originalXHROpen.call(this, method, url, async, username, password);
-      };
-      
-      // Override window.open
-      window.open = function(url?: string | URL): Window | null {
-        if (url) {
-          captureUrl(url.toString());
-        }
-        return null; // Don't actually open the window
-      };
-      
-      // Override location methods
-      window.location.assign = function(url: string): void {
-        captureUrl(url);
-      };
-      
-      window.location.replace = function(url: string): void {
-        captureUrl(url);
-      };
-      
-      // Set timeout
-      timeoutId = window.setTimeout(() => {
-        restoreOriginals();
-        resolve(capturedUrl);
-      }, 2000);
-      
-      // Try multiple ways to trigger the download
-      try {
-        // Method 1: Direct click
-        downloadButton.click();
-        
-        // Method 2: Dispatch events
-        window.setTimeout(() => {
-          const events = ['mousedown', 'mouseup', 'click'];
-          for (const eventType of events) {
-            try {
-              const event = new MouseEvent(eventType, {
-                bubbles: true,
-                cancelable: true,
-                view: window
-              });
-              downloadButton.dispatchEvent(event);
-            } catch (e) {
-              this.debug('Error dispatching event:', e);
-            }
-          }
-        }, 100);
-        
-        // Method 3: Try to call onclick directly
-        window.setTimeout(() => {
-          if (downloadButton.onclick) {
-            try {
-              const clickEvent = new MouseEvent('click', {
-                bubbles: true,
-                cancelable: true,
-                view: window
-              });
-              downloadButton.onclick(clickEvent);
-            } catch (e) {
-              this.debug('Error calling onclick directly:', e);
-            }
-          }
-        }, 200);
-        
-        // Method 4: Try to submit parent form if exists
-        window.setTimeout(() => {
-          const form = downloadButton.closest('form') as HTMLFormElement;
-          if (form) {
-            try {
-              // Don't actually submit, just see if it triggers any network calls
-              const submitEvent = new Event('submit', {
-                bubbles: true,
-                cancelable: true
-              });
-              form.dispatchEvent(submitEvent);
-            } catch (e) {
-              this.debug('Error triggering form submit:', e);
-            }
-          }
-        }, 300);
-        
-      } catch (error) {
-        this.debug('Error simulating download:', error);
-        restoreOriginals();
-        resolve(null);
-      }
-    });
-  }
-
-  private async interceptDownloadRequest(downloadButton: HTMLElement): Promise<string | null> {
-    return new Promise((resolve) => {
-      this.debug('Attempting to intercept download request');
-      
-      const originalFetch = window.fetch;
-      const originalXHROpen = XMLHttpRequest.prototype.open;
-      let capturedUrl: string | null = null;
-      let timeoutId: number;
-      
-      // Override fetch
-      window.fetch = function(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
-        const url = typeof input === 'string' ? input : 
-                    input instanceof URL ? input.toString() : 
-                    (input as Request).url;
-        
-        if (url.includes('amazonaws.com') && (url.includes('X-Amz-') || url.includes('.json.gz'))) {
-          capturedUrl = url;
-          window.fetch = originalFetch;
-          XMLHttpRequest.prototype.open = originalXHROpen;
-          resolve(capturedUrl);
-          return Promise.reject(new Error('Request intercepted for preview'));
-        }
-        
-        return originalFetch.call(this, input, init);
-      };
-      
-      // Override XMLHttpRequest
-      XMLHttpRequest.prototype.open = function(method: string, url: string | URL, async: boolean = true, username?: string | null, password?: string | null): void {
-        const urlStr = url.toString();
-        if (urlStr.includes('amazonaws.com') && (urlStr.includes('X-Amz-') || urlStr.includes('.json.gz'))) {
-          capturedUrl = urlStr;
-          window.fetch = originalFetch;
-          XMLHttpRequest.prototype.open = originalXHROpen;
-          resolve(capturedUrl);
-          return;
-        }
-        
-        return originalXHROpen.call(this, method, url, async, username, password);
-      };
-      
-      // Set timeout to restore functions
-      timeoutId = window.setTimeout(() => {
-        window.fetch = originalFetch;
-        XMLHttpRequest.prototype.open = originalXHROpen;
-        resolve(capturedUrl);
-      }, 3000);
-      
-      // Trigger the download
-      try {
-        // Try clicking the button with different event types
-        const events = ['click', 'mousedown', 'mouseup'];
-        for (const eventType of events) {
-          const event = new MouseEvent(eventType, {
-            bubbles: true,
-            cancelable: true,
-            view: window
-          });
-          downloadButton.dispatchEvent(event);
+    fileInput.addEventListener('change', async (event) => {
+      const file = (event.target as HTMLInputElement).files?.[0];
+      if (file) {
+        try {
+          const arrayBuffer = await file.arrayBuffer();
+          const uint8Array = new Uint8Array(arrayBuffer);
           
-          // Small delay between events
-          setTimeout(() => {}, 10);
+          // Try to decompress and parse
+          const decompressedData = this.decompressGzip(uint8Array);
+          const jsonString = new TextDecoder().decode(decompressedData);
+          const parsedJson = JSON.parse(jsonString);
+          const formattedJson = JSON.stringify(parsedJson, null, 2);
+          
+          this.showS3PreviewPanel(formattedJson, downloadButton, file.name);
+          
+        } catch (error) {
+          this.showS3ErrorNotification(`Failed to process file: ${error instanceof Error ? error.message : 'Unknown error'}`);
         }
-        
-        // Also try direct click
-        if (downloadButton.onclick) {
-          downloadButton.onclick(new MouseEvent('click'));
-        }
-        
-      } catch (error) {
-        this.debug('Error triggering download:', error);
-        window.clearTimeout(timeoutId);
-        window.fetch = originalFetch;
-        XMLHttpRequest.prototype.open = originalXHROpen;
-        resolve(null);
       }
-    });
-  }
-
-  private extractUrlFromPageContext(fileName: string): string | null {
-    this.debug('Extracting URL from page context for:', fileName);
-    
-    // Look for pre-signed URLs in links
-    const allLinks = Array.from(document.querySelectorAll('a[href*="amazonaws.com"]')) as HTMLAnchorElement[];
-    for (const link of allLinks) {
-      if ((link.href.includes(fileName) || link.href.includes('X-Amz-')) && link.href.includes('amazonaws.com')) {
-        this.debug('Found potential pre-signed link:', link.href);
-        return link.href;
-      }
-    }
-    
-    // Look in script tags
-    const scripts = Array.from(document.querySelectorAll('script'));
-    for (const script of scripts) {
-      const content = script.textContent || '';
       
-      // Look for pre-signed URLs with authentication
-      const preSignedMatches = content.match(/https:\/\/[^"'\s]+\.amazonaws\.com[^"'\s]*X-Amz-[^"'\s]*/g);
-      if (preSignedMatches) {
-        for (const url of preSignedMatches) {
-          if (url.includes(fileName.replace(/\./g, '\\.'))) {
-            this.debug('Found pre-signed URL in script:', url);
-            return url;
-          }
-        }
-        // If we found pre-signed URLs but none match the filename exactly, try the first one
-        if (preSignedMatches.length > 0) {
-          this.debug('Found generic pre-signed URL:', preSignedMatches[0]);
-          return preSignedMatches[0];
-        }
-      }
-    }
+      // Clean up
+      document.body.removeChild(fileInput);
+    });
     
-    // Look in the HTML for any AWS URLs
-    const htmlContent = document.documentElement.innerHTML;
-    const awsUrlMatches = htmlContent.match(/https:\/\/[^"'\s]+\.amazonaws\.com[^"'\s]*X-Amz-[^"'\s]*/g);
-    if (awsUrlMatches) {
-      for (const url of awsUrlMatches) {
-        if (url.includes(fileName)) {
-          this.debug('Found AWS URL in HTML:', url);
-          return url;
-        }
-      }
-    }
-    
-    return null;
+    document.body.appendChild(fileInput);
+    fileInput.click();
   }
 
-  private extractDownloadUrlFromDetailPage(downloadButton: HTMLElement): string | null {
-    this.debug('Extracting download URL from button:', downloadButton);
+  private showFallbackDialog(fileName: string, downloadButton: HTMLElement): void {
+    const dialog = document.createElement('div');
+    const theme = this.detectAWSTheme();
+    const styles = this.getThemeStyles(theme);
     
-    if (downloadButton.tagName === 'A') {
-      const href = (downloadButton as HTMLAnchorElement).href;
-      this.debug('Found href on anchor:', href);
-      return href;
-    }
-
-    // Check for various URL attributes
-    const urlAttributes = ['data-url', 'data-href', 'data-download-url', 'data-presigned-url'];
-    for (const attr of urlAttributes) {
-      const url = downloadButton.getAttribute(attr);
-      if (url) {
-        this.debug('Found URL in attribute', attr, url);
-        return url;
+    dialog.style.cssText = `
+      position: fixed;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      background: ${styles.background};
+      color: ${styles.text};
+      border: 1px solid ${styles.border};
+      border-radius: 8px;
+      padding: 20px;
+      z-index: 10001;
+      box-shadow: 0 10px 25px ${styles.shadow};
+      max-width: 400px;
+    `;
+    
+    dialog.innerHTML = `
+      <h3 style="margin: 0 0 15px 0; font-size: 16px;">Preview ${fileName}</h3>
+      <p style="margin: 0 0 15px 0; font-size: 14px; line-height: 1.4;">
+        The file couldn't be previewed directly. You can:
+      </p>
+      <div style="display: flex; gap: 10px; justify-content: flex-end;">
+        <button id="download-first" style="
+          background: ${styles.buttonBg};
+          color: ${styles.buttonText};
+          border: none;
+          border-radius: 4px;
+          padding: 8px 16px;
+          cursor: pointer;
+          font-size: 14px;
+        ">Download & Preview</button>
+        <button id="select-file" style="
+          background: transparent;
+          color: ${styles.text};
+          border: 1px solid ${styles.border};
+          border-radius: 4px;
+          padding: 8px 16px;
+          cursor: pointer;
+          font-size: 14px;
+        ">Select Downloaded File</button>
+        <button id="cancel-dialog" style="
+          background: transparent;
+          color: ${styles.textSecondary};
+          border: none;
+          border-radius: 4px;
+          padding: 8px 16px;
+          cursor: pointer;
+          font-size: 14px;
+        ">Cancel</button>
+      </div>
+    `;
+    
+    document.body.appendChild(dialog);
+    
+    // Add event listeners
+    dialog.querySelector('#download-first')?.addEventListener('click', () => {
+      downloadButton.click();
+      document.body.removeChild(dialog);
+      
+      // Show instructions
+      setTimeout(() => {
+        this.showInstructions(fileName, downloadButton);
+      }, 1000);
+    });
+    
+    dialog.querySelector('#select-file')?.addEventListener('click', () => {
+      document.body.removeChild(dialog);
+      this.createFileInputFallback(fileName, downloadButton);
+    });
+    
+    dialog.querySelector('#cancel-dialog')?.addEventListener('click', () => {
+      document.body.removeChild(dialog);
+    });
+    
+    // Close on outside click
+    const closeOnOutsideClick = (event: Event) => {
+      if (!dialog.contains(event.target as Node)) {
+        document.body.removeChild(dialog);
+        document.removeEventListener('click', closeOnOutsideClick, true);
       }
-    }
-
-    // Look for onclick handler
-    const onclick = downloadButton.getAttribute('onclick');
-    if (onclick) {
-      const urlMatch = onclick.match(/https?:\/\/[^\s'",)]+/);
-      if (urlMatch) {
-        this.debug('Found URL in onclick:', urlMatch[0]);
-        return urlMatch[0];
-      }
-    }
-
-    // Check parent elements
-    let parent = downloadButton.parentElement;
-    while (parent && parent !== document.body) {
-      if (parent.tagName === 'A') {
-        const href = (parent as HTMLAnchorElement).href;
-        if (href && href.includes('amazonaws.com')) {
-          this.debug('Found parent link:', href);
-          return href;
-        }
-      }
-      parent = parent.parentElement;
-    }
-
-    return null;
+    };
+    
+    setTimeout(() => {
+      document.addEventListener('click', closeOnOutsideClick, true);
+    }, 100);
   }
 
-  private async fetchAndDisplayS3File(downloadUrl: string, fileName: string, anchorElement: HTMLElement): Promise<void> {
-    this.debug('Fetching S3 file from URL:', downloadUrl);
+  private showInstructions(fileName: string, downloadButton: HTMLElement): void {
+    const notification = document.createElement('div');
+    const theme = this.detectAWSTheme();
+    const styles = this.getThemeStyles(theme);
     
-    const response = await fetch(downloadUrl);
-    if (!response.ok) {
-      throw new Error(`Failed to fetch file: ${response.statusText}`);
-    }
-
-    const binaryData = new Uint8Array(await response.arrayBuffer());
+    notification.style.cssText = `
+      position: fixed;
+      bottom: 20px;
+      right: 20px;
+      background: ${styles.background};
+      color: ${styles.text};
+      border: 1px solid ${styles.border};
+      border-radius: 8px;
+      padding: 16px;
+      z-index: 10001;
+      max-width: 350px;
+      box-shadow: 0 4px 12px ${styles.shadow};
+    `;
     
-    const decompressedData = this.decompressGzip(binaryData);
-    const jsonString = new TextDecoder().decode(decompressedData);
-    const parsedJson = JSON.parse(jsonString);
-    const formattedJson = JSON.stringify(parsedJson, null, 2);
-
-    this.showS3PreviewPanel(formattedJson, anchorElement, fileName);
-  }
-
-  private extractDownloadUrl(downloadButton: HTMLElement): string | null {
-    if (downloadButton.tagName === 'A') {
-      return (downloadButton as HTMLAnchorElement).href;
-    }
-
-    const parentLink = downloadButton.closest('a[href]') as HTMLAnchorElement;
-    if (parentLink) {
-      return parentLink.href;
-    }
-
-    const dataUrl = downloadButton.dataset.url || downloadButton.dataset.href;
-    if (dataUrl) {
-      return dataUrl;
-    }
-
-    return null;
+    notification.innerHTML = `
+      <div style="font-weight: 600; margin-bottom: 8px;">File Downloaded</div>
+      <div style="font-size: 14px; margin-bottom: 12px;">
+        Once the download completes, click the "Select Downloaded File" button to preview it.
+      </div>
+      <button id="select-downloaded" style="
+        background: ${styles.buttonBg};
+        color: ${styles.buttonText};
+        border: none;
+        border-radius: 4px;
+        padding: 6px 12px;
+        cursor: pointer;
+        font-size: 12px;
+        margin-right: 8px;
+      ">Select Downloaded File</button>
+      <button id="dismiss-notification" style="
+        background: transparent;
+        color: ${styles.textSecondary};
+        border: none;
+        border-radius: 4px;
+        padding: 6px 12px;
+        cursor: pointer;
+        font-size: 12px;
+      ">Dismiss</button>
+    `;
+    
+    document.body.appendChild(notification);
+    
+    notification.querySelector('#select-downloaded')?.addEventListener('click', () => {
+      document.body.removeChild(notification);
+      this.createFileInputFallback(fileName, downloadButton);
+    });
+    
+    notification.querySelector('#dismiss-notification')?.addEventListener('click', () => {
+      document.body.removeChild(notification);
+    });
+    
+    // Auto-dismiss after 10 seconds
+    setTimeout(() => {
+      if (document.body.contains(notification)) {
+        document.body.removeChild(notification);
+      }
+    }, 10000);
   }
 
   private showS3PreviewPanel(content: string, anchorElement: HTMLElement, fileName: string): void {
